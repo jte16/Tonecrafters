@@ -144,6 +144,7 @@ void ProccessADC()
 	fonepole(gCurrentDelayTime, gDelayTime, .00007f);
 	del.SetDelay(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 1.0f));
 	delRev.SetDelay1(kSampleRate * gCurrentDelayTime);
+	//delRev.SetDelay1(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 0.5f));
 	filt.SetFreq(ScaleNum(gFilterFreq, 300.0f, 20000.0f));
 
 	// change flanger
@@ -260,12 +261,10 @@ int main(void)
 	hw.Init();
 	hw.SetAudioBlockSize(4); // number of samples handled per callback
 	hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
-
-	del.Init();
-	delRev.Init();
-
 	hw.StartAdc();
 	
+	del.Init();
+	delRev.Init();
 
 	led1.Init(hw.seed.GetPin(Terrarium::LED_1),false);
     led2.Init(hw.seed.GetPin(Terrarium::LED_2),false);
