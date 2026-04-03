@@ -28,7 +28,7 @@ void InitializeADC();
 enum EffectsChannels {
 	delayMode,
 	flangerMode,
-	crushMode
+	reverbMode
 };
 
 // -------------  Global variables to chage later on -----------------
@@ -61,9 +61,9 @@ float gFlangerFeedback = 0.83f;
 float gFlangerDryWet = 0.0f;
 
 // bitcrusher variables
-float gCrushBitDepth = 1;
-float gCrushBitRate = 1;
-float gCrushDryWet = 0.0f;
+float gReverbTime = 0.6f;
+float gReverbFreq = 500.0f;
+float gReverbDryWet = 0.0f;
 
 // filter variables
 float gFilterFreq = 10000.0f;
@@ -74,11 +74,14 @@ float gPostGain = 1.0f;
 // -------------------- defining delay lines & chorus ------------------------
 
 #define MAX_DELAY static_cast<size_t>(48000 * 0.75f)
-static DelayLine<float, MAX_DELAY> del;
-static DelayLineReverse<float, MAX_DELAY> delRev;
+//static DelayLine<float, MAX_DELAY> del;
+//static DelayLineReverse<float, MAX_DELAY> delRev;
+static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
+static DelayLineReverse<float, MAX_DELAY> DSY_SDRAM_BSS delRev;
 
 Flanger flanger;
-Bitcrush crush;
+//static ReverbSc DSY_SDRAM_BSS verb;
+ReverbSc verb;
 MoogLadder filt;
 Overdrive drive;
 Metro met;
@@ -124,10 +127,10 @@ void ProccessADC()
 			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_3].Process(), gFlangerFeedback);
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gFlangerDryWet);
 			break;
-		case crushMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_1].Process(), gCrushBitDepth);
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_2].Process(), gCrushBitRate);
-			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gCrushDryWet);
+		case reverbMode:
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_1].Process(), gReverbTime);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_2].Process(), gReverbFreq);
+			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gReverbDryWet);
 			break;
 		default:
 			System::ResetToBootloader();
@@ -145,8 +148,10 @@ void ProccessADC()
 	flanger.SetLfoFreq(gFlangerFreq);
 
 	// change bitcrusher
-	crush.SetBitDepth(round(ScaleNum(gCrushBitDepth, 1.0f, 16.0f)));
-	crush.SetCrushRate(round(ScaleNum(gCrushBitRate, 2000.0f, 48000.0f)));
+	//verb.SetFeedback((ScaleNum(gReverbTime, 0.6f, 0.999f)));
+	verb.SetFeedback(0.7f);
+	//verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
+	verb.SetLpFreq(10000.0f);
 
 	// change distortion
 	drive.SetDrive(ScaleNum(gDistortion, 0.1f, 1.0f));
@@ -154,7 +159,7 @@ void ProccessADC()
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
 {
-	float feedback, sig_out, delRev_out, del_out, fla_out, crush_out;
+	float feedback, sig_out, delRev_out, del_out, fla_out, wetl, wetr;
 
 	hw.ProcessAllControls();
 	ProccessADC();
@@ -170,9 +175,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 				effect = flangerMode;
 				break;
 			case flangerMode:
-				effect = crushMode;
+				effect = reverbMode;
 				break;
-			case crushMode:
+			case reverbMode:
 				effect = delayMode;
 				break;
 			default:
@@ -238,8 +243,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 			// BITCRUSHER PROCCESSING
 			if(hw.switches[Terrarium::SWITCH_4].Pressed())
 			{
-				crush_out = crush.Process(out[0][i]);
-				out[0][i] = (crush_out * gCrushDryWet) + (out[0][i] * (1.0f - gCrushDryWet));
+				verb.Process(out[0][i], out[0][i], &wetl, &wetr);
+				out[0][i] = (wetl * gReverbDryWet) + (out[0][i] * (1.0f - gReverbDryWet));
 			}
 		}
 		out[0][i] *= gPostGain;
@@ -267,9 +272,10 @@ int main(void)
 	flanger.SetFeedback(gFlangerFeedback);
 
 	// Initialize bitcrusher
-	crush.Init(kSampleRate);
-	crush.SetBitDepth(3);
-	crush.SetCrushRate(1000.0f);
+	float sample_rate = hw.AudioSampleRate();
+	verb.Init(sample_rate);
+	verb.SetFeedback(gReverbTime);
+	verb.SetLpFreq(gReverbFreq);
 
 	// Initialize filter
 	filt.Init(kSampleRate);
@@ -294,7 +300,7 @@ int main(void)
 			case flangerMode:
 				lfo.SetFreq(0.03f);
 				break;
-			case crushMode:
+			case reverbMode:
 				lfo.SetFreq(0.05f);
 				break;
 			default:
