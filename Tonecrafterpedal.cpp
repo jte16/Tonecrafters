@@ -46,7 +46,8 @@ float k5 = 0;
 
 
 // delay variables
-float gDelayTime, gCurrentDelayTime = 1.0f; 
+float gDelayTime = 1.0f; 
+float gCurrentDelayTime = 1.0f;
 float gDelayFeedback = 0.3f;
 float gDelayDryWet = 0.5f;
 bool revDelay = true;
@@ -71,6 +72,8 @@ float gFilterFreq = 10000.0f;
 // gain variables
 float gPostGain = 1.0f;
 
+//DelayLine::SetBuffer();
+
 // -------------------- defining delay lines & chorus ------------------------
 
 #define MAX_DELAY static_cast<size_t>(48000 * 0.75f)
@@ -79,6 +82,7 @@ float gPostGain = 1.0f;
 static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
 static DelayLineReverse<float, MAX_DELAY> DSY_SDRAM_BSS delRev;
 
+//Flanger flanger;
 Flanger flanger;
 //static ReverbSc DSY_SDRAM_BSS verb;
 ReverbSc verb;
@@ -148,10 +152,10 @@ void ProccessADC()
 	flanger.SetLfoFreq(gFlangerFreq);
 
 	// change bitcrusher
-	//verb.SetFeedback((ScaleNum(gReverbTime, 0.6f, 0.999f)));
-	verb.SetFeedback(0.7f);
-	//verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
-	verb.SetLpFreq(10000.0f);
+	verb.SetFeedback((ScaleNum(gReverbTime, 0.6f, 0.999f)));
+	//verb.SetFeedback(0.7f);
+	verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
+	//verb.SetLpFreq(10000.0f);
 
 	// change distortion
 	drive.SetDrive(ScaleNum(gDistortion, 0.1f, 1.0f));
@@ -256,6 +260,10 @@ int main(void)
 	hw.Init();
 	hw.SetAudioBlockSize(4); // number of samples handled per callback
 	hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
+
+	del.Init();
+	delRev.Init();
+
 	hw.StartAdc();
 	
 
