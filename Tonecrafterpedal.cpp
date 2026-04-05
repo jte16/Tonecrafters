@@ -27,7 +27,7 @@ void InitializeADC();
 
 enum EffectsChannels {
 	delayMode,
-	flangerMode,
+	chorusMode,
 	reverbMode
 };
 
@@ -56,10 +56,10 @@ bool revDelay = true;
 float gDistortion = 1.0f; // 1 == no distortion
 
 // flanger variables
-float gFlangerDepth = 0.5f;
-float gFlangerFreq = 0.33f;
-float gFlangerFeedback = 0.83f;
-float gFlangerDryWet = 0.0f;
+float gChorusDepth = 0.5f;
+float gChorusFreq = 0.33f;
+float gChorusFeedback = 0.83f;
+float gChorusDryWet = 0.0f;
 
 // bitcrusher variables
 float gReverbTime = 0.6f;
@@ -83,7 +83,7 @@ static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
 static DelayLineReverse<float, MAX_DELAY> DSY_SDRAM_BSS delRev;
 
 //Flanger flanger;
-Flanger flanger;
+Chorus chorus;
 //static ReverbSc DSY_SDRAM_BSS verb;
 ReverbSc verb;
 MoogLadder filt;
@@ -114,27 +114,27 @@ float ScaleNum(float num, float newMin, float newMax)
 void ProccessADC()
 {
 	// hw.ProcessAllControls();
-	gDistortion = hw.knob[Terrarium::KNOB_5].Process();
-	gPostGain = hw.knob[Terrarium::KNOB_4].Process();
+	gDistortion = hw.knob[Terrarium::KNOB_2].Process();
+	gPostGain = hw.knob[Terrarium::KNOB_1].Process();
 
 	switch(effect)
 	{
 		case delayMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_1].Process(), gDelayTime); // only maps when pot is changed
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_2].Process(), gDelayFeedback);
-			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gDelayDryWet);
-			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_3].Process(), gFilterFreq);
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gDelayTime); // only maps when pot is changed
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gDelayFeedback);
+			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gDelayDryWet);
+			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gFilterFreq);
 			break;
-		case flangerMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_1].Process(), gFlangerFreq);
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_2].Process(), gFlangerDepth);
-			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_3].Process(), gFlangerFeedback);
-			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gFlangerDryWet);
+		case chorusMode:
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gChorusFreq);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gChorusDepth);
+			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gChorusFeedback);
+			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gChorusDryWet);
 			break;
 		case reverbMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_1].Process(), gReverbTime);
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_2].Process(), gReverbFreq);
-			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_6].Process(), gReverbDryWet);
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gReverbTime);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gReverbFreq);
+			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gReverbDryWet);
 			break;
 		default:
 			System::ResetToBootloader();
@@ -148,11 +148,11 @@ void ProccessADC()
 	filt.SetFreq(ScaleNum(gFilterFreq, 300.0f, 20000.0f));
 
 	// change flanger
-	flanger.SetFeedback(gFlangerFeedback);
-	flanger.SetLfoDepth(gFlangerDepth);
-	flanger.SetLfoFreq(gFlangerFreq);
+	chorus.SetFeedback(gChorusFeedback * 0.75f);
+	chorus.SetLfoDepth(gChorusDepth);
+	chorus.SetLfoFreq(gChorusFreq);
 
-	// change bitcrusher
+	// change reverb
 	verb.SetFeedback((ScaleNum(gReverbTime, 0.6f, 0.999f)));
 	//verb.SetFeedback(0.7f);
 	verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
@@ -164,7 +164,7 @@ void ProccessADC()
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
 {
-	float feedback, sig_out, delRev_out, del_out, fla_out, wetl, wetr;
+	float feedback, sig_out, delRev_out, del_out, cho_out, wetl, wetr;
 
 	hw.ProcessAllControls();
 	ProccessADC();
@@ -177,9 +177,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 		switch(effect)
 		{
 			case delayMode:
-				effect = flangerMode;
+				effect = chorusMode;
 				break;
-			case flangerMode:
+			case chorusMode:
 				effect = reverbMode;
 				break;
 			case reverbMode:
@@ -213,8 +213,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 			// FLANGER PROCCESSING
 			if(hw.switches[Terrarium::SWITCH_3].Pressed())
 			{
-				fla_out = flanger.Process(out[0][i]);
-				out[0][i] = (fla_out * gFlangerDryWet) + (out[0][i] * (1.0f - gFlangerDryWet));
+				cho_out = chorus.Process(out[0][i]);
+				out[0][i] = (cho_out * gChorusDryWet) + (out[0][i] * (1.0f - gChorusDryWet));
 			}
 
 			// DELAY PROCCESSING
@@ -245,7 +245,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
 			out[0][i] = drive.Process(sig_out);
 
-			// BITCRUSHER PROCCESSING
+			// REVERB PROCCESSING
 			if(hw.switches[Terrarium::SWITCH_4].Pressed())
 			{
 				verb.Process(out[0][i], out[0][i], &wetl, &wetr);
@@ -273,12 +273,12 @@ int main(void)
 	led2.Update();
 	
 	// Initialize chorus
-	flanger.Init(kSampleRate);
-	flanger.SetLfoFreq(gFlangerFreq);
-	flanger.SetLfoDepth(gFlangerDepth);
-	flanger.SetFeedback(gFlangerFeedback);
+	chorus.Init(kSampleRate);
+	chorus.SetLfoFreq(gChorusFreq);
+	chorus.SetLfoDepth(gChorusDepth);
+	chorus.SetFeedback(gChorusFeedback);
 
-	// Initialize bitcrusher
+	// Initialize reverb
 	float sample_rate = hw.AudioSampleRate();
 	verb.Init(sample_rate);
 	verb.SetFeedback(gReverbTime);
@@ -304,7 +304,7 @@ int main(void)
 			case delayMode:
 				lfo.SetFreq(0.015f);
 				break;
-			case flangerMode:
+			case chorusMode:
 				lfo.SetFreq(0.03f);
 				break;
 			case reverbMode:
