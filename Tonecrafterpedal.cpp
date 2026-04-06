@@ -50,23 +50,24 @@ float gDelayDryWet = 0.5f;
 
 // distortion variable
 float gDistortion = 1.0f; // 1 == no distortion
+float gDriveAmount = 0.1f;
 
 // chorus variables
 float gChorusDepth = 0.5f;
 float gChorusFreq = 0.33f;
 float gChorusFeedback = 0.83f;
-float gChorusDryWet = 0.0f;
+float gChorusDryWet = 0.5f;
 
 // reverb variables
 float gReverbTime = 0.6f;
 float gReverbFreq = 500.0f;
-float gReverbDryWet = 0.0f;
+float gReverbDryWet = 0.5f;
 
 // tremolo variables
 float gTremoloFreq = 5.0f;
 float gTremoloDepth = 0.5f;
 float gTremoloWave = 0.0f;
-float gTremoloDryWet = 0.0f;
+float gTremoloDryWet = 0.5f;
 
 // filter variables
 float gFilterFreq = 10000.0f;
@@ -166,8 +167,8 @@ void ProccessADC()
 			break;
 		case chorusMode:
 			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gChorusFreq);
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gChorusDepth);
-			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gChorusFeedback);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_6].Process(), gChorusDepth);
+			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_5].Process(), gChorusFeedback);
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gChorusDryWet);
 			break;
 		case reverbMode:
@@ -176,9 +177,9 @@ void ProccessADC()
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gReverbDryWet);
 			break;
 		case tremoloMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gTremoloDepth);
-			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gTremoloFreq);
-			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gTremoloWave);
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_6].Process(), gTremoloDepth);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_4].Process(), gTremoloFreq);
+			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_5].Process(), gTremoloWave);
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gTremoloDryWet);
 			break;
 		default:
@@ -225,7 +226,8 @@ void ProccessADC()
 	}
 
 	// change distortion
-	drive.SetDrive(ScaleNum(gDistortion, 0.1f, 1.0f));
+	gDriveAmount = ScaleNum(gDistortion, 0.1f, 1.0f);
+	drive.SetDrive(gDriveAmount);
 }
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
@@ -243,12 +245,12 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 		switch(effect)
 		{
 			case tremoloMode:
-				effect = delayMode;
-				break;
-			case delayMode:
 				effect = chorusMode;
 				break;
 			case chorusMode:
+				effect = delayMode;
+				break;
+			case delayMode:
 				effect = reverbMode;
 				break;
 			case reverbMode:
@@ -267,6 +269,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
         led1.Set(bypass ? 0.0f : 1.0f);
     }
 
+	// Pre-calculate drive compensation
+	float driveCompensation = 1.0f - (gDriveAmount * 0.9f);
+
 	for (size_t i = 0; i < size; i++)
 	{
 		out[0][i] = in[0][i] * kPreGain;
@@ -281,21 +286,22 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 			}
 
 			// CHORUS PROCESSING
-			if(hw.switches[Terrarium::SWITCH_3].Pressed())
+			if(hw.switches[Terrarium::SWITCH_2].Pressed())
 			{
 				cho_out = chorus.Process(out[0][i]);
 				out[0][i] = (cho_out * gChorusDryWet) + (out[0][i] * (1.0f - gChorusDryWet));
 			}
 
 			// DELAY PROCESSING - only process when switch is on
-			if(hw.switches[Terrarium::SWITCH_2].Pressed())
+			if(hw.switches[Terrarium::SWITCH_3].Pressed())
 			{
 				del_out = delay1.Process(filt.Process(out[0][i]));
 				del_out = tanhf(del_out); // soft clip to prevent pops
 				out[0][i] = out[0][i] + del_out;
 			}
 
-			out[0][i] = drive.Process(out[0][i]);
+			// DRIVE PROCESSING with volume compensation
+			out[0][i] = drive.Process(out[0][i]) * driveCompensation;
 
 			// REVERB PROCESSING
 			if(hw.switches[Terrarium::SWITCH_4].Pressed())
@@ -363,10 +369,10 @@ int main(void)
 			case tremoloMode:
 				lfo.SetFreq(0.015f);
 				break;
-			case delayMode:
+			case chorusMode:
 				lfo.SetFreq(0.03f);
 				break;
-			case chorusMode:
+			case delayMode:
 				lfo.SetFreq(0.06f);
 				break;
 			case reverbMode:
