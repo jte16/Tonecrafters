@@ -80,7 +80,6 @@ float gPostGain = 1.0f;
 //static DelayLine<float, MAX_DELAY> del;
 //static DelayLineReverse<float, MAX_DELAY> delRev;
 static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
-static DelayLineReverse<float, MAX_DELAY> DSY_SDRAM_BSS delRev;
 
 //Flanger flanger;
 Chorus chorus;
@@ -143,7 +142,6 @@ void ProccessADC()
 	// change delays and filter
 	fonepole(gCurrentDelayTime, gDelayTime, .00007f);
 	del.SetDelay(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 1.0f));
-	delRev.SetDelay1(kSampleRate * gCurrentDelayTime);
 	//delRev.SetDelay1(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 0.5f));
 	filt.SetFreq(ScaleNum(gFilterFreq, 300.0f, 20000.0f));
 
@@ -164,7 +162,7 @@ void ProccessADC()
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
 {
-	float feedback, sig_out, delRev_out, del_out, cho_out, wetl, wetr;
+	float feedback, sig_out, trem_out, del_out, cho_out, wetl, wetr;
 
 	hw.ProcessAllControls();
 	ProccessADC();
@@ -219,24 +217,13 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
 			// DELAY PROCCESSING
 			del_out = del.Read();
-			delRev_out = delRev.ReadRev();
 
 			// DELAY
 			if(hw.switches[Terrarium::SWITCH_2].Pressed())
 			{
-				// checking if reverse switch is pressed
-				if(revDelay)
-				{
-					sig_out = (delRev_out * gDelayDryWet) + (out[0][i] * (1.0f - gDelayDryWet));
-					feedback = (delRev_out * gDelayFeedback) + out[0][i];
-				}
-				else
-				{
-					sig_out = (del_out * gDelayDryWet) + (out[0][i] * (1.0f - gDelayDryWet));
-					feedback = (del_out * gDelayFeedback) + out[0][i];
-				}
+				sig_out = (del_out * gDelayDryWet) + (out[0][i] * (1.0f - gDelayDryWet));
+				feedback = (del_out * gDelayFeedback) + out[0][i];
 				del.Write(filt.Process(feedback)); 
-				delRev.Write(filt.Process(feedback));
 			}
 			else
 			{
@@ -264,7 +251,6 @@ int main(void)
 	hw.StartAdc();
 	
 	del.Init();
-	delRev.Init();
 
 	led1.Init(hw.seed.GetPin(Terrarium::LED_1),false);
     led2.Init(hw.seed.GetPin(Terrarium::LED_2),false);
