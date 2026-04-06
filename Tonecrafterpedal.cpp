@@ -44,28 +44,26 @@ float k3 = 0;
 float k4 = 0;
 float k5 = 0;
 
-
 // delay variables
-float gDelayTime = 1.0f; 
-float gCurrentDelayTime = 1.0f;
-float gDelayFeedback = 0.3f;
+float gDelayTime = 0.0f;
+float gDelayFeedback = 0.0f;
 float gDelayDryWet = 0.5f;
-bool revDelay = true;
 
 // distortion variable
 float gDistortion = 1.0f; // 1 == no distortion
 
-// flanger variables
+// chorus variables
 float gChorusDepth = 0.5f;
 float gChorusFreq = 0.33f;
 float gChorusFeedback = 0.83f;
 float gChorusDryWet = 0.0f;
 
-// bitcrusher variables
+// reverb variables
 float gReverbTime = 0.6f;
 float gReverbFreq = 500.0f;
 float gReverbDryWet = 0.0f;
 
+// tremolo variables
 float gTremoloFreq = 5.0f;
 float gTremoloDepth = 0.5f;
 float gTremoloWave = 0.0f;
@@ -77,23 +75,43 @@ float gFilterFreq = 10000.0f;
 // gain variables
 float gPostGain = 1.0f;
 
-//DelayLine::SetBuffer();
+// -------------------- defining delay lines & effects ------------------------
 
-// -------------------- defining delay lines & chorus ------------------------
+#define MAX_DELAY static_cast<size_t>(48000 * 2.f + 1000)
+DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS delayLine;
 
-#define MAX_DELAY static_cast<size_t>(48000 * 0.75f)
-//static DelayLine<float, MAX_DELAY> del;
-//static DelayLineReverse<float, MAX_DELAY> delRev;
-static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
+struct delay
+{
+    DelayLine<float, MAX_DELAY> *del;
+    float                        currentDelay;
+    float                        delayTarget;
+    float                        feedback;
+    float                        active = false;
+    
+    float Process(float in)
+    {
+        //set delay times
+        fonepole(currentDelay, delayTarget, .0002f);
+        del->SetDelay(currentDelay);
 
-//Flanger flanger;
+        float read = del->Read();
+        if (active) {
+            del->Write((feedback * read) + in);
+        } else {
+            del->Write((feedback * read)); // if not active, don't write any new sound to buffer
+        }
+
+        return read;
+    }
+};
+
+delay delay1;
+
 Chorus chorus;
-//static ReverbSc DSY_SDRAM_BSS verb;
 ReverbSc verb;
 Tremolo trem;
 MoogLadder filt;
 Overdrive drive;
-Metro met;
 Oscillator lfo;
 
 
@@ -118,14 +136,13 @@ float ScaleNum(float num, float newMin, float newMax)
 
 void ProccessADC()
 {
-	// hw.ProcessAllControls();
 	gDistortion = hw.knob[Terrarium::KNOB_2].Process();
 	gPostGain = hw.knob[Terrarium::KNOB_1].Process();
 
 	switch(effect)
 	{
 		case delayMode:
-			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gDelayTime); // only maps when pot is changed
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gDelayTime);
 			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gDelayFeedback);
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gDelayDryWet);
 			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gFilterFreq);
@@ -151,33 +168,43 @@ void ProccessADC()
 			System::ResetToBootloader();
 			break;
 	}
-	// change delays and filter
-	fonepole(gCurrentDelayTime, gDelayTime, .00007f);
-	del.SetDelay(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 1.0f));
-	//delRev.SetDelay1(kSampleRate * ScaleNum(gCurrentDelayTime, 0.01f, 0.5f));
+
+	// change delay
+	if (gDelayTime < 0.01f) {
+		delay1.active = false;
+	} else {
+		delay1.active = true;
+	}
+
+	if (gDelayTime <= 0.75f) {
+		delay1.delayTarget = 2400 + gDelayTime * 60800;
+	} else {
+		delay1.delayTarget = 48000 + (gDelayTime - 0.75f) * 192000;
+	}
+	delay1.feedback = gDelayFeedback;
+
+	// change filter
 	filt.SetFreq(ScaleNum(gFilterFreq, 300.0f, 20000.0f));
 
-	// change flanger
+	// change chorus
 	chorus.SetFeedback(gChorusFeedback * 0.75f);
 	chorus.SetLfoDepth(gChorusDepth);
 	chorus.SetLfoFreq(gChorusFreq);
 
 	// change reverb
 	verb.SetFeedback((ScaleNum(gReverbTime, 0.6f, 0.999f)));
-	//verb.SetFeedback(0.7f);
 	verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
-	//verb.SetLpFreq(10000.0f);
 
-	//change tremolo
+	// change tremolo
 	trem.SetFreq(ScaleNum(gTremoloFreq, 0.5f, 15.0f));
 	trem.SetDepth(gTremoloDepth);
 	if(gTremoloWave > 0.5f)
 	{
-    	trem.SetWaveform(Oscillator::WAVE_TRI);
+		trem.SetWaveform(Oscillator::WAVE_TRI);
 	}
 	else
 	{
-    	trem.SetWaveform(Oscillator::WAVE_SIN);
+		trem.SetWaveform(Oscillator::WAVE_SIN);
 	}
 
 	// change distortion
@@ -186,7 +213,7 @@ void ProccessADC()
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
 {
-	float feedback, sig_out, trem_out, del_out, cho_out, wetl, wetr;
+	float trem_out, del_out, cho_out, wetl, wetr;
 
 	hw.ProcessAllControls();
 	ProccessADC();
@@ -229,37 +256,31 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
 		if(!bypass)
 		{
-			// Tremolo PROCCESSING
+			// TREMOLO PROCESSING
 			if(hw.switches[Terrarium::SWITCH_1].Pressed())
 			{
 				trem_out = trem.Process(out[0][i]);
 				out[0][i] = (trem_out * gTremoloDryWet) + (out[0][i] * (1.0f - gTremoloDryWet));
 			}
-			// Chorus PROCCESSING
+
+			// CHORUS PROCESSING
 			if(hw.switches[Terrarium::SWITCH_3].Pressed())
 			{
 				cho_out = chorus.Process(out[0][i]);
 				out[0][i] = (cho_out * gChorusDryWet) + (out[0][i] * (1.0f - gChorusDryWet));
 			}
 
-			// DELAY PROCCESSING
-			del_out = del.Read();
+			// DELAY PROCESSING
+			del_out = delay1.Process(out[0][i]);
 
-			// DELAY
 			if(hw.switches[Terrarium::SWITCH_2].Pressed())
 			{
-				sig_out = (del_out * gDelayDryWet) + (out[0][i] * (1.0f - gDelayDryWet));
-				feedback = (del_out * gDelayFeedback) + out[0][i];
-				del.Write(filt.Process(feedback)); 
-			}
-			else
-			{
-				sig_out = out[0][i];
+				out[0][i] = out[0][i] + del_out;
 			}
 
-			out[0][i] = drive.Process(sig_out);
+			out[0][i] = drive.Process(out[0][i]);
 
-			// REVERB PROCCESSING
+			// REVERB PROCESSING
 			if(hw.switches[Terrarium::SWITCH_4].Pressed())
 			{
 				verb.Process(out[0][i], out[0][i], &wetl, &wetr);
@@ -273,11 +294,16 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 int main(void)
 {
 	hw.Init();
-	hw.SetAudioBlockSize(4); // number of samples handled per callback
+	hw.SetAudioBlockSize(48);
 	hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
 	hw.StartAdc();
 	
-	del.Init();
+	// Initialize delay
+	delayLine.Init();
+	delay1.del = &delayLine;
+	delay1.delayTarget = 2400;
+	delay1.feedback = 0.0;
+	delay1.active = false;
 
 	led1.Init(hw.seed.GetPin(Terrarium::LED_1),false);
     led2.Init(hw.seed.GetPin(Terrarium::LED_2),false);
@@ -291,7 +317,7 @@ int main(void)
 	chorus.SetLfoDepth(gChorusDepth);
 	chorus.SetFeedback(gChorusFeedback);
 
-	// Initialize Tremolo
+	// Initialize tremolo
 	trem.Init(kSampleRate);
 	trem.SetFreq(gTremoloFreq);
 	trem.SetDepth(gTremoloDepth);
@@ -307,12 +333,10 @@ int main(void)
 	filt.Init(kSampleRate);
 	filt.SetRes(0.0f);
 
-	// Initialize flanger LFO for LED
+	// Initialize LFO for LED
 	lfo.Init(kSampleRate);
 	lfo.SetWaveform(Oscillator::WAVE_SQUARE);
 	lfo.SetFreq(0.1f);
-	
-	
 
 	hw.StartAudio(AudioCallback);
 
@@ -339,5 +363,3 @@ int main(void)
 		led2.Update();
 	}
 }
-
- 
