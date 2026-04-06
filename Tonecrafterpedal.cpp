@@ -1,6 +1,5 @@
 #include "daisy_petal.h"
 #include "daisysp.h"
-#include "delayline_reverse.h"
 #include "terrarium.h"
 
 using namespace terrarium;
@@ -28,6 +27,7 @@ void InitializeADC();
 enum EffectsChannels {
 	delayMode,
 	chorusMode,
+	tremoloMode,
 	reverbMode
 };
 
@@ -66,6 +66,11 @@ float gReverbTime = 0.6f;
 float gReverbFreq = 500.0f;
 float gReverbDryWet = 0.0f;
 
+float gTremoloFreq = 5.0f;
+float gTremoloDepth = 0.5f;
+float gTremoloWave = 0.0f;
+float gTremoloDryWet = 0.0f;
+
 // filter variables
 float gFilterFreq = 10000.0f;
 
@@ -85,6 +90,7 @@ static DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS del;
 Chorus chorus;
 //static ReverbSc DSY_SDRAM_BSS verb;
 ReverbSc verb;
+Tremolo trem;
 MoogLadder filt;
 Overdrive drive;
 Metro met;
@@ -135,6 +141,12 @@ void ProccessADC()
 			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gReverbFreq);
 			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gReverbDryWet);
 			break;
+		case tremoloMode:
+			ConditionalParameter(k1, hw.knob[Terrarium::KNOB_4].Process(), gTremoloDepth);
+			ConditionalParameter(k2, hw.knob[Terrarium::KNOB_5].Process(), gTremoloFreq);
+			ConditionalParameter(k3, hw.knob[Terrarium::KNOB_6].Process(), gTremoloWave);
+			ConditionalParameter(k5, hw.knob[Terrarium::KNOB_3].Process(), gTremoloDryWet);
+			break;
 		default:
 			System::ResetToBootloader();
 			break;
@@ -156,6 +168,18 @@ void ProccessADC()
 	verb.SetLpFreq((ScaleNum(gReverbFreq, 500.0f, 20000.0f)));
 	//verb.SetLpFreq(10000.0f);
 
+	//change tremolo
+	trem.SetFreq(ScaleNum(gTremoloFreq, 0.5f, 15.0f));
+	trem.SetDepth(gTremoloDepth);
+	if(gTremoloWave > 0.5f)
+	{
+    	trem.SetWaveform(Oscillator::WAVE_TRI);
+	}
+	else
+	{
+    	trem.SetWaveform(Oscillator::WAVE_SIN);
+	}
+
 	// change distortion
 	drive.SetDrive(ScaleNum(gDistortion, 0.1f, 1.0f));
 }
@@ -174,6 +198,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 	{
 		switch(effect)
 		{
+			case tremoloMode:
+				effect = delayMode;
+				break;
 			case delayMode:
 				effect = chorusMode;
 				break;
@@ -181,7 +208,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 				effect = reverbMode;
 				break;
 			case reverbMode:
-				effect = delayMode;
+				effect = tremoloMode;
 				break;
 			default:
 				System::ResetToBootloader();
@@ -196,19 +223,19 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
         led1.Set(bypass ? 0.0f : 1.0f);
     }
 
-	// REVERSE DELAY
-	if(hw.switches[Terrarium::SWITCH_1].Pressed())
-		revDelay = false;
-	else
-		revDelay = true;
-
 	for (size_t i = 0; i < size; i++)
 	{
 		out[0][i] = in[0][i] * kPreGain;
 
 		if(!bypass)
 		{
-			// FLANGER PROCCESSING
+			// Tremolo PROCCESSING
+			if(hw.switches[Terrarium::SWITCH_1].Pressed())
+			{
+				trem_out = trem.Process(out[0][i]);
+				out[0][i] = (trem_out * gTremoloDryWet) + (out[0][i] * (1.0f - gTremoloDryWet));
+			}
+			// Chorus PROCCESSING
 			if(hw.switches[Terrarium::SWITCH_3].Pressed())
 			{
 				cho_out = chorus.Process(out[0][i]);
@@ -264,6 +291,12 @@ int main(void)
 	chorus.SetLfoDepth(gChorusDepth);
 	chorus.SetFeedback(gChorusFeedback);
 
+	// Initialize Tremolo
+	trem.Init(kSampleRate);
+	trem.SetFreq(gTremoloFreq);
+	trem.SetDepth(gTremoloDepth);
+	trem.SetWaveform(Oscillator::WAVE_SIN);
+
 	// Initialize reverb
 	float sample_rate = hw.AudioSampleRate();
 	verb.Init(sample_rate);
@@ -287,14 +320,17 @@ int main(void)
 		led2.Set(lfo.Process());
 		switch(effect)
 		{
-			case delayMode:
+			case tremoloMode:
 				lfo.SetFreq(0.015f);
 				break;
-			case chorusMode:
+			case delayMode:
 				lfo.SetFreq(0.03f);
 				break;
+			case chorusMode:
+				lfo.SetFreq(0.06f);
+				break;
 			case reverbMode:
-				lfo.SetFreq(0.05f);
+				lfo.SetFreq(0.12f);
 				break;
 			default:
 				System::ResetToBootloader();
