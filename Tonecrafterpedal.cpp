@@ -20,7 +20,6 @@ Led led1, led2;
 
 float ScaleNum(float num, float newMin, float newMax);
 void ConditionalParameter(float  &oldVal, float  newVal, float &param);
-void InitializeADC();
 
 // ----------------------------- ENUMS ------------------------------------
 
@@ -75,37 +74,55 @@ float gFilterFreq = 10000.0f;
 // gain variables
 float gPostGain = 1.0f;
 
-// -------------------- defining delay lines & effects ------------------------
+// -------------------- custom delay with buffer in SDRAM --------------------
 
-#define MAX_DELAY static_cast<size_t>(48000 * 2.f + 1000)
-DelayLine<float, MAX_DELAY> DSY_SDRAM_BSS delayLine;
+#define MAX_DELAY static_cast<size_t>(48000 * 2 + 1000)
+float DSY_SDRAM_BSS delayBuffer[MAX_DELAY];
 
 struct delay
 {
-    DelayLine<float, MAX_DELAY> *del;
-    float                        currentDelay;
-    float                        delayTarget;
-    float                        feedback;
-    float                        active = false;
-    
+    float  currentDelay;
+    float  delayTarget;
+    float  feedback;
+    bool   active = false;
+    int    writePos = 0;
+
     float Process(float in)
     {
-        //set delay times
         fonepole(currentDelay, delayTarget, .0002f);
-        del->SetDelay(currentDelay);
 
-        float read = del->Read();
+        // Read from buffer with linear interpolation
+        float readPos = (float)writePos - currentDelay;
+        if (readPos < 0) readPos += MAX_DELAY;
+        
+        int   pos0 = (int)readPos;
+        int   pos1 = (pos0 + 1) % MAX_DELAY;
+        float frac = readPos - pos0;
+        float read = delayBuffer[pos0] + frac * (delayBuffer[pos1] - delayBuffer[pos0]);
+
+        // Write to buffer
         if (active) {
-            del->Write((feedback * read) + in);
+            delayBuffer[writePos] = (feedback * read) + in;
         } else {
-            del->Write((feedback * read)); // if not active, don't write any new sound to buffer
+            delayBuffer[writePos] = (feedback * read);
         }
 
+        writePos = (writePos + 1) % MAX_DELAY;
         return read;
+    }
+
+    void Init()
+    {
+        for (size_t i = 0; i < MAX_DELAY; i++)
+            delayBuffer[i] = 0.0f;
+        writePos = 0;
+        currentDelay = 2400;
     }
 };
 
 delay delay1;
+
+// -------------------- effects ------------------------
 
 Chorus chorus;
 ReverbSc verb;
@@ -181,7 +198,7 @@ void ProccessADC()
 	} else {
 		delay1.delayTarget = 48000 + (gDelayTime - 0.75f) * 192000;
 	}
-	delay1.feedback = gDelayFeedback;
+	delay1.feedback = gDelayFeedback * 0.85f;
 
 	// change filter
 	filt.SetFreq(ScaleNum(gFilterFreq, 300.0f, 20000.0f));
@@ -270,11 +287,11 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 				out[0][i] = (cho_out * gChorusDryWet) + (out[0][i] * (1.0f - gChorusDryWet));
 			}
 
-			// DELAY PROCESSING
-			del_out = delay1.Process(out[0][i]);
-
+			// DELAY PROCESSING - only process when switch is on
 			if(hw.switches[Terrarium::SWITCH_2].Pressed())
 			{
+				del_out = delay1.Process(filt.Process(out[0][i]));
+				del_out = tanhf(del_out); // soft clip to prevent pops
 				out[0][i] = out[0][i] + del_out;
 			}
 
@@ -299,8 +316,7 @@ int main(void)
 	hw.StartAdc();
 	
 	// Initialize delay
-	delayLine.Init();
-	delay1.del = &delayLine;
+	delay1.Init();
 	delay1.delayTarget = 2400;
 	delay1.feedback = 0.0;
 	delay1.active = false;
